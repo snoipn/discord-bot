@@ -14,11 +14,6 @@ from datetime import datetime, timezone
 
 # ═══════════════════════════════════════════════════════════ Konfiguration ════
 
-print("DEBUG ENV VARS:")
-for key, val in os.environ.items():
-    if "TOKEN" in key or "TWITCH" in key or "DISCORD" in key:
-        print(f"  {key} = {val[:10]}...")
-
 DISCORD_TOKEN        = os.environ.get("DISCORD_TOKEN", "")
 TWITCH_CLIENT_ID     = os.environ.get("TWITCH_CLIENT_ID", "")
 TWITCH_CLIENT_SECRET = os.environ.get("TWITCH_CLIENT_SECRET", "")
@@ -260,11 +255,14 @@ async def clip_check_loop(broadcaster_id):
     while True:
         await asyncio.sleep(CHECK_INTERVAL)
         try:
+            print(f"🔍 Checking for new clips... (known: {len(seen_clips)})")
             clips      = twitch_api.get_recent_clips(broadcaster_id)
+            print(f"   Twitch returned {len(clips)} clips")
             new_clips  = [c for c in clips if c["id"] not in seen_clips]
+            print(f"   New clips: {len(new_clips)}")
 
             for clip in reversed(new_clips):
-                print(f"🎬 Neuer Clip: {clip['title']} von {clip['creator_name']}")
+                print(f"🎬 New clip: {clip['title']} by {clip['creator_name']}")
                 embed = make_clip_embed(clip)
                 await channel.send(embed=embed)
                 seen_clips.add(clip["id"])
@@ -273,7 +271,7 @@ async def clip_check_loop(broadcaster_id):
                 save_seen(seen_clips)
 
         except Exception as e:
-            print(f"❌ Clip-Check Fehler: {e}")
+            print(f"❌ Clip-Check error: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════ Start ════════
