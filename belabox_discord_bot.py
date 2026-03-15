@@ -80,17 +80,28 @@ class TwitchAPI:
         return None
 
     def get_recent_clips(self, broadcaster_id, first=20):
+        # Nur Clips der letzten 24 Stunden abrufen, sortiert nach Erstellungszeit
+        from datetime import timedelta
+        started_at = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
         resp = requests.get(
             "https://api.twitch.tv/helix/clips",
             headers=self._headers(),
-            params={"broadcaster_id": broadcaster_id, "first": first, "sort": "time"},
+            params={
+                "broadcaster_id": broadcaster_id,
+                "first":          first,
+                "started_at":     started_at
+            },
             timeout=10)
         if resp.status_code == 401:
             self.get_token()
             resp = requests.get(
                 "https://api.twitch.tv/helix/clips",
                 headers=self._headers(),
-                params={"broadcaster_id": broadcaster_id, "first": first},
+                params={
+                    "broadcaster_id": broadcaster_id,
+                    "first":          first,
+                    "started_at":     started_at
+                },
                 timeout=10)
         resp.raise_for_status()
         return resp.json().get("data", [])
@@ -177,7 +188,7 @@ intents.messages = True
 bot        = discord.Client(intents=intents)
 tree       = discord.app_commands.CommandTree(bot)
 twitch_api = TwitchAPI()
-seen_clips = load_seen()
+seen_clips = set()  # Always start fresh – only track clips from now on
 
 
 @tree.command(name="audio", description="Show the BelaBox audio input control panel")
@@ -226,18 +237,18 @@ async def on_ready():
         print(f"❌ Twitch API Fehler: {e}")
         return
 
-    # Beim ersten Start: vorhandene Clips als gesehen markieren
+    # Beim ersten Start: nur Clips der letzten 24h als gesehen markieren
     global seen_clips
     if not seen_clips:
-        print("📋 Erster Start – markiere vorhandene Clips...")
+        print("📋 First start – marking existing clips as seen...")
         try:
             clips = twitch_api.get_recent_clips(bid)
             for clip in clips:
                 seen_clips.add(clip["id"])
             save_seen(seen_clips)
-            print(f"   {len(seen_clips)} Clips markiert")
+            print(f"   {len(seen_clips)} clips marked as seen")
         except Exception as e:
-            print(f"❌ Fehler: {e}")
+            print(f"❌ Error: {e}")
 
     # Clip-Check Loop starten
     bot.loop.create_task(clip_check_loop(bid))
