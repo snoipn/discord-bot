@@ -80,28 +80,28 @@ class TwitchAPI:
         return None
 
     def get_recent_clips(self, broadcaster_id, first=20):
-        # Nur Clips der letzten 24 Stunden abrufen, sortiert nach Erstellungszeit
+        # Nur Clips der letzten 10 Minuten – so kommen ALLE neuen Clips, nicht nur populäre
         from datetime import timedelta
-        started_at = (datetime.now(timezone.utc) - timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        now        = datetime.now(timezone.utc)
+        started_at = (now - timedelta(minutes=10)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        ended_at   = now.strftime("%Y-%m-%dT%H:%M:%SZ")
+        params = {
+            "broadcaster_id": broadcaster_id,
+            "first":          first,
+            "started_at":     started_at,
+            "ended_at":       ended_at
+        }
         resp = requests.get(
             "https://api.twitch.tv/helix/clips",
             headers=self._headers(),
-            params={
-                "broadcaster_id": broadcaster_id,
-                "first":          first,
-                "started_at":     started_at
-            },
+            params=params,
             timeout=10)
         if resp.status_code == 401:
             self.get_token()
             resp = requests.get(
                 "https://api.twitch.tv/helix/clips",
                 headers=self._headers(),
-                params={
-                    "broadcaster_id": broadcaster_id,
-                    "first":          first,
-                    "started_at":     started_at
-                },
+                params=params,
                 timeout=10)
         resp.raise_for_status()
         return resp.json().get("data", [])
