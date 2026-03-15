@@ -83,7 +83,7 @@ class TwitchAPI:
         resp = requests.get(
             "https://api.twitch.tv/helix/clips",
             headers=self._headers(),
-            params={"broadcaster_id": broadcaster_id, "first": first},
+            params={"broadcaster_id": broadcaster_id, "first": first, "sort": "time"},
             timeout=10)
         if resp.status_code == 401:
             self.get_token()
@@ -258,6 +258,8 @@ async def clip_check_loop(broadcaster_id):
             print(f"🔍 Checking for new clips... (known: {len(seen_clips)})")
             clips      = twitch_api.get_recent_clips(broadcaster_id)
             print(f"   Twitch returned {len(clips)} clips")
+            if clips:
+                print(f"   Newest clip: '{clips[0]['title']}' created {clips[0]['created_at']}")
             new_clips  = [c for c in clips if c["id"] not in seen_clips]
             print(f"   New clips: {len(new_clips)}")
 
