@@ -162,21 +162,17 @@ def make_clip_embed(clip):
     created = clip.get("created_at", "")
     try:
         dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
-        ts = f"<t:{int(dt.timestamp())}:R>"
+        ts = f"<t:{int(dt.timestamp())}:f>"  # full date + time, e.g. "March 15, 2026 11:29 PM"
     except:
         ts = created
 
     embed = discord.Embed(
-        title       = clip.get("title", "New Clip"),
+        description = f"**{clip.get('creator_name', '?')}** clipped\n## {clip.get('title', 'New Clip')}",
         url         = clip.get("url", ""),
-        description = f"📺 A new clip was created on **slumg1**! {ts}",
-        color       = discord.Color.purple()
+        color       = 0x9146FF  # Twitch purple
     )
     embed.set_image(url=clip.get("thumbnail_url", ""))
-    embed.add_field(name="✂️ Clipped by", value=clip.get("creator_name", "?"),   inline=True)
-    embed.add_field(name="👁️ Views",      value=str(clip.get("view_count", 0)),  inline=True)
-    embed.add_field(name="⏱️ Duration",   value=f"{clip.get('duration', 0)}s",   inline=True)
-    embed.set_footer(text="Twitch Clip • slumg1")
+    embed.set_footer(text=ts)
     return embed
 
 
