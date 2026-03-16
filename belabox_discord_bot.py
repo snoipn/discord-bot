@@ -114,41 +114,39 @@ class TwitchAPI:
 class KickAPI:
     """Kick has no official API – uses the public unofficial endpoint."""
 
-    def get_channel_id(self, username):
-        resp = requests.get(
-            f"https://kick.com/api/v1/channels/{username}",
-            headers={"Accept": "application/json",
-                     "User-Agent": "Mozilla/5.0"},
-            timeout=10)
-        resp.raise_for_status()
-        return resp.json().get("id")
+    HEADERS = {
+        "Accept":          "application/json, text/plain, */*",
+        "Accept-Language": "en-US,en;q=0.9",
+        "Referer":         "https://kick.com/",
+        "Origin":          "https://kick.com",
+        "User-Agent":      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+        "sec-ch-ua":       '"Chromium";v="122", "Not(A:Brand";v="24"',
+        "sec-ch-ua-mobile":"?0",
+        "sec-fetch-dest":  "empty",
+        "sec-fetch-mode":  "cors",
+        "sec-fetch-site":  "same-origin",
+    }
 
-    def get_recent_clips(self, username, cursor=None):
+    def get_recent_clips(self, username):
         from datetime import timedelta
-        params = {"sort": "date", "time": "day"}
-        if cursor:
-            params["cursor"] = cursor
         resp = requests.get(
             f"https://kick.com/api/v2/channels/{username}/clips",
-            headers={"Accept": "application/json",
-                     "User-Agent": "Mozilla/5.0"},
-            params=params,
+            headers=self.HEADERS,
+            params={"sort": "date", "time": "day"},
             timeout=10)
         resp.raise_for_status()
-        data = resp.json()
-        # API returns {"clips": [...], "nextCursor": ...}
+        data  = resp.json()
         clips = data.get("clips", data.get("data", []))
-        # Filter to last 10 minutes
         cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
         recent = []
         for clip in clips:
-            created = clip.get("created_at", clip.get("clip_url", ""))
+            created = clip.get("created_at", "")
             try:
                 dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
                 if dt >= cutoff:
                     recent.append(clip)
             except:
-                recent.append(clip)  # include if can't parse date
+                recent.append(clip)
         return recent
 
 
