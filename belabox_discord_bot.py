@@ -371,16 +371,16 @@ async def kick_clip_check_loop():
             seen_kick_clips.add(clip.get("id", clip.get("clip_url", "")))
         print(f"   {len(seen_kick_clips)} Kick clips marked as seen")
     except Exception as e:
-        print(f"❌ Kick initial check error: {e}")
+        print(f"⚠️ Kick initial check failed (will retry): {e}")
 
+    kick_fail_count = 0
     while True:
         await asyncio.sleep(CHECK_INTERVAL)
         try:
-            print(f"🔍 Checking Kick clips... (known: {len(seen_kick_clips)})")
             clips = kick_api.get_recent_clips(KICK_CHANNEL)
-            print(f"   Kick returned {len(clips)} clips")
+            kick_fail_count = 0
             new_clips = [c for c in clips if c.get("id", c.get("clip_url", "")) not in seen_kick_clips]
-            print(f"   New Kick clips: {len(new_clips)}")
+            print(f"🔍 Kick: {len(clips)} clips, {len(new_clips)} new")
 
             for clip in reversed(new_clips):
                 clip_id = clip.get("id", clip.get("clip_url", ""))
@@ -393,11 +393,17 @@ async def kick_clip_check_loop():
                 seen_kick_clips.add(clip_id)
 
         except Exception as e:
-            print(f"❌ Kick Clip-Check error: {e}")
+            kick_fail_count += 1
+            if kick_fail_count <= 3:
+                print(f"⚠️ Kick error ({kick_fail_count}/3): {e}")
+            elif kick_fail_count == 4:
+                print(f"⚠️ Kick API repeatedly failing – will keep trying silently")
 
 
 # ═══════════════════════════════════════════════════════════════ Start ════════
 
 if __name__ == "__main__":
+    import time
     print("🤖 Starte BelaBox Discord Bot...")
+    time.sleep(5)  # Kurze Pause beim Start um Rate Limits zu vermeiden
     bot.run(DISCORD_TOKEN)
