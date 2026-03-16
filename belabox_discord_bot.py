@@ -26,11 +26,13 @@ if not TWITCH_CLIENT_SECRET:
     raise RuntimeError("TWITCH_CLIENT_SECRET nicht gesetzt!")
 
 # Channel IDs
-CHANNEL_CLIPS      = 1307038131668652103
-CHANNEL_BB_AUDIO_1 = 1127204481419968613
-CHANNEL_BB_AUDIO_2 = 1303959861385625661
+CHANNEL_CLIPS        = 1307038131668652103   # Twitch clips
+CHANNEL_KICK_CLIPS   = 1307038156905910302   # Kick clips
+CHANNEL_BB_AUDIO_1   = 1127204481419968613
+CHANNEL_BB_AUDIO_2   = 1303959861385625661
 
 TWITCH_CHANNEL = "slumg1"
+KICK_CHANNEL   = "slumg"
 BELABOX_KEY    = "7DMVJ0mAklNzzjY9ayXzLjde5Hjsul"
 BELABOX_WS     = "wss://remote.belabox.net/ws/remote"
 
@@ -105,6 +107,74 @@ class TwitchAPI:
                 timeout=10)
         resp.raise_for_status()
         return resp.json().get("data", [])
+
+
+# ═══════════════════════════════════════════════════════════════ Kick API ══════
+
+class KickAPI:
+    """Kick has no official API – uses the public unofficial endpoint."""
+
+    def get_channel_id(self, username):
+        resp = requests.get(
+            f"https://kick.com/api/v1/channels/{username}",
+            headers={"Accept": "application/json",
+                     "User-Agent": "Mozilla/5.0"},
+            timeout=10)
+        resp.raise_for_status()
+        return resp.json().get("id")
+
+    def get_recent_clips(self, username, cursor=None):
+        from datetime import timedelta
+        params = {"sort": "date", "time": "day"}
+        if cursor:
+            params["cursor"] = cursor
+        resp = requests.get(
+            f"https://kick.com/api/v2/channels/{username}/clips",
+            headers={"Accept": "application/json",
+                     "User-Agent": "Mozilla/5.0"},
+            params=params,
+            timeout=10)
+        resp.raise_for_status()
+        data = resp.json()
+        # API returns {"clips": [...], "nextCursor": ...}
+        clips = data.get("clips", data.get("data", []))
+        # Filter to last 10 minutes
+        cutoff = datetime.now(timezone.utc) - timedelta(minutes=10)
+        recent = []
+        for clip in clips:
+            created = clip.get("created_at", clip.get("clip_url", ""))
+            try:
+                dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+                if dt >= cutoff:
+                    recent.append(clip)
+            except:
+                recent.append(clip)  # include if can't parse date
+        return recent
+
+
+def make_kick_embed(clip):
+    created = clip.get("created_at", "")
+    try:
+        dt = datetime.fromisoformat(created.replace("Z", "+00:00"))
+        ts = f"<t:{int(dt.timestamp())}:f>"
+    except:
+        ts = created
+
+    creator  = clip.get("creator", {})
+    creator_name = creator.get("username", clip.get("channel", {}).get("username", "?")) if isinstance(creator, dict) else str(creator)
+    title    = clip.get("title", "New Clip")
+    clip_url = clip.get("clip_url", clip.get("url", "https://kick.com"))
+    thumb    = clip.get("thumbnail_url", clip.get("thumbnail", ""))
+
+    embed = discord.Embed(
+        description = f"**{creator_name}** clipped\n## {title}",
+        url         = clip_url,
+        color       = 0x53FC18  # Kick green
+    )
+    if thumb:
+        embed.set_image(url=thumb)
+    embed.set_footer(text=ts)
+    return embed
 
 
 # ═══════════════════════════════════════════════════════════ Seen Clips ═══════
@@ -184,7 +254,9 @@ intents.messages = True
 bot        = discord.Client(intents=intents)
 tree       = discord.app_commands.CommandTree(bot)
 twitch_api = TwitchAPI()
-seen_clips = set()  # Always start fresh – only track clips from now on
+kick_api   = KickAPI()
+seen_clips      = set()
+seen_kick_clips = set()
 
 
 @tree.command(name="audio", description="Show the BelaBox audio input control panel")
@@ -212,9 +284,10 @@ async def slash_mic(interaction: discord.Interaction):
 @bot.event
 async def on_ready():
     print(f"✅ Bot eingeloggt als {bot.user}")
-    print(f"🎬 Clip Channel:    {CHANNEL_CLIPS}")
-    print(f"🎙️ BB Audio Ch. 1: {CHANNEL_BB_AUDIO_1}")
-    print(f"🎙️ BB Audio Ch. 2: {CHANNEL_BB_AUDIO_2}")
+    print(f"🎬 Twitch Clip Channel: {CHANNEL_CLIPS}")
+    print(f"🎬 Kick Clip Channel:   {CHANNEL_KICK_CLIPS}")
+    print(f"🎙️ BB Audio Ch. 1:     {CHANNEL_BB_AUDIO_1}")
+    print(f"🎙️ BB Audio Ch. 2:     {CHANNEL_BB_AUDIO_2}")
 
     # Sync slash commands
     await tree.sync()
@@ -246,8 +319,9 @@ async def on_ready():
         except Exception as e:
             print(f"❌ Error: {e}")
 
-    # Clip-Check Loop starten
+    # Start both clip check loops
     bot.loop.create_task(clip_check_loop(bid))
+    bot.loop.create_task(kick_clip_check_loop())
 
 
 async def clip_check_loop(broadcaster_id):
@@ -281,6 +355,47 @@ async def clip_check_loop(broadcaster_id):
 
         except Exception as e:
             print(f"❌ Clip-Check error: {e}")
+
+
+async def kick_clip_check_loop():
+    global seen_kick_clips
+    channel = bot.get_channel(CHANNEL_KICK_CLIPS)
+    if not channel:
+        print(f"❌ Kick Clip Channel {CHANNEL_KICK_CLIPS} not found!")
+        return
+
+    print(f"🔄 Kick Clip-Check every {CHECK_INTERVAL}s...")
+
+    # Mark existing clips as seen on first run
+    try:
+        clips = kick_api.get_recent_clips(KICK_CHANNEL)
+        for clip in clips:
+            seen_kick_clips.add(clip.get("id", clip.get("clip_url", "")))
+        print(f"   {len(seen_kick_clips)} Kick clips marked as seen")
+    except Exception as e:
+        print(f"❌ Kick initial check error: {e}")
+
+    while True:
+        await asyncio.sleep(CHECK_INTERVAL)
+        try:
+            print(f"🔍 Checking Kick clips... (known: {len(seen_kick_clips)})")
+            clips = kick_api.get_recent_clips(KICK_CHANNEL)
+            print(f"   Kick returned {len(clips)} clips")
+            new_clips = [c for c in clips if c.get("id", c.get("clip_url", "")) not in seen_kick_clips]
+            print(f"   New Kick clips: {len(new_clips)}")
+
+            for clip in reversed(new_clips):
+                clip_id = clip.get("id", clip.get("clip_url", ""))
+                title   = clip.get("title", "New Clip")
+                creator = clip.get("creator", {})
+                name    = creator.get("username", "?") if isinstance(creator, dict) else str(creator)
+                print(f"🎬 New Kick clip: {title} by {name}")
+                embed = make_kick_embed(clip)
+                await channel.send(embed=embed)
+                seen_kick_clips.add(clip_id)
+
+        except Exception as e:
+            print(f"❌ Kick Clip-Check error: {e}")
 
 
 # ═══════════════════════════════════════════════════════════════ Start ════════
