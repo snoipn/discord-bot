@@ -12,6 +12,7 @@ import json
 import os
 import time
 import threading
+import websocket as ws_lib
 from datetime import datetime, timezone
 
 # ═══════════════════════════════════════════════════════════ Konfiguration ════
@@ -20,8 +21,6 @@ DISCORD_TOKEN        = os.environ.get("DISCORD_TOKEN", "")
 TWITCH_CLIENT_ID     = os.environ.get("TWITCH_CLIENT_ID", "")
 TWITCH_CLIENT_SECRET = os.environ.get("TWITCH_CLIENT_SECRET", "")
 BELABOX_KEY          = os.environ.get("BELABOX_KEY", "")
-TG_TOKEN             = os.environ.get("TG_TOKEN", "")
-TG_CHAT_ID           = os.environ.get("TG_CHAT_ID", "")
 
 if not DISCORD_TOKEN:
     raise RuntimeError("DISCORD_TOKEN nicht gesetzt!")
@@ -219,8 +218,6 @@ def belabox_switch_audio(asrc: str, log_fn=None, done_fn=None):
     Stops encoder, switches audio input, restarts encoder.
     Runs in a background thread.
     """
-    import websocket as ws_lib
-
     def _do():
         try:
             if log_fn: log_fn(f"BelaBox: Connecting...")
