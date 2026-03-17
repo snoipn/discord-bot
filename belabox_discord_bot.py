@@ -10,6 +10,8 @@ import requests
 import asyncio
 import json
 import os
+import time
+import threading
 from datetime import datetime, timezone
 
 # ═══════════════════════════════════════════════════════════ Konfiguration ════
@@ -193,35 +195,88 @@ def save_seen(seen):
 
 # ══════════════════════════════════════════ BelaBox Audio Input Buttons ═══════
 
+BELABOX_KEY      = "7DMVJ0mAklNzzjY9ayXzLjde5Hjsul"
+BELABOX_WS_URL   = "wss://remote.belabox.net/ws/remote"
+BELABOX_PIPELINE = "f1ade4e52502e56a5d94b4786360838c719dfd49"
+BELABOX_CONFIG   = {
+    "acodec":          "opus",
+    "delay":           0,
+    "max_br":          5000,
+    "srt_latency":     3500,
+    "bitrate_overlay": False,
+    "relay_server":    "6",
+    "relay_account":   "8130"
+}
+AUDIO_INPUTS = {
+    "osmo":  "OsmoAction4",
+    "usb":   "USB audio"
+}
+
+
+def belabox_switch_audio(asrc: str, log_fn=None):
+    """
+    Stops encoder, switches audio input, restarts encoder.
+    Runs in a background thread.
+    """
+    import websocket as ws_lib
+
+    def _do():
+        try:
+            if log_fn: log_fn(f"BelaBox: Connecting to switch audio to '{asrc}'...")
+            ws = ws_lib.create_connection(
+                BELABOX_WS_URL,
+                header={"Origin": "https://remote.belabox.net",
+                        "User-Agent": "Mozilla/5.0"},
+                timeout=10)
+
+            # Auth
+            ws.send(json.dumps({
+                "remote": {"auth/key": {"key": BELABOX_KEY, "version": 6}}
+            }))
+
+            # Wait for auth confirmation then stop
+            for _ in range(10):
+                msg = json.loads(ws.recv())
+                if "remote" in msg:
+                    break
+
+            # Stop encoder
+            if log_fn: log_fn("BelaBox: Stopping encoder...")
+            ws.send(json.dumps({"stop": 0}))
+            time.sleep(1)
+
+            # Start with new audio input
+            start_cmd = {"start": {**{"pipeline": BELABOX_PIPELINE, "asrc": asrc}, **BELABOX_CONFIG}}
+            if log_fn: log_fn(f"BelaBox: Starting with audio '{asrc}'...")
+            ws.send(json.dumps(start_cmd))
+            time.sleep(1)
+
+            ws.close()
+            if log_fn: log_fn(f"BelaBox: Audio switched to '{asrc}' ✅")
+            return True
+
+        except Exception as e:
+            if log_fn: log_fn(f"BelaBox: Error switching audio – {e}")
+            return False
+
+    threading.Thread(target=_do, daemon=True).start()
+
+
 class AudioInputView(discord.ui.View):
-    """
-    Buttons für BelaBox Audio-Input Steuerung.
-    Die eigentliche Logik wird später ergänzt sobald die
-    WebSocket-Befehle bekannt sind.
-    """
     def __init__(self):
-        super().__init__(timeout=None)  # Buttons bleiben dauerhaft aktiv
+        super().__init__(timeout=None)
 
-    # ── Platzhalter-Buttons (werden später mit echten Befehlen befüllt)
-    @discord.ui.button(label="🎤 Audio Input 1", style=discord.ButtonStyle.primary,  custom_id="bb_audio_1")
-    async def audio_1(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="📷 DJI Cam", style=discord.ButtonStyle.primary, custom_id="bb_audio_osmo")
+    async def audio_osmo(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
-        await interaction.followup.send("⏳ Setting Audio Input 1... (not yet implemented)", ephemeral=True)
+        await interaction.followup.send("⏳ Switching to **DJI Cam**...", ephemeral=True)
+        belabox_switch_audio(AUDIO_INPUTS["osmo"])
 
-    @discord.ui.button(label="🎵 Audio Input 2", style=discord.ButtonStyle.primary,  custom_id="bb_audio_2")
-    async def audio_2(self, interaction: discord.Interaction, button: discord.ui.Button):
+    @discord.ui.button(label="🎙️ Microphone", style=discord.ButtonStyle.primary, custom_id="bb_audio_usb")
+    async def audio_usb(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
-        await interaction.followup.send("⏳ Setting Audio Input 2... (not yet implemented)", ephemeral=True)
-
-    @discord.ui.button(label="🔊 Audio Input 3", style=discord.ButtonStyle.primary,  custom_id="bb_audio_3")
-    async def audio_3(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        await interaction.followup.send("⏳ Setting Audio Input 3... (not yet implemented)", ephemeral=True)
-
-    @discord.ui.button(label="📊 BB Status", style=discord.ButtonStyle.secondary, custom_id="bb_status")
-    async def bb_status(self, interaction: discord.Interaction, button: discord.ui.Button):
-        await interaction.response.defer()
-        await interaction.followup.send("📊 BelaBox Status: coming soon...", ephemeral=True)
+        await interaction.followup.send("⏳ Switching to **Microphone**...", ephemeral=True)
+        belabox_switch_audio(AUDIO_INPUTS["usb"])
 
 
 # ═══════════════════════════════════════════════════════════ Clip Embed ═══════
@@ -265,10 +320,12 @@ seen_kick_clips = set()
 async def slash_audio(interaction: discord.Interaction):
     embed = discord.Embed(
         title       = "🎙️ BelaBox Audio Control",
-        description = "Select the audio input for the BelaBox:",
+        description = "Switch the BelaBox encoder audio input:",
         color       = discord.Color.orange()
     )
-    embed.set_footer(text="Buttons will be active once the BelaBox WebSocket commands are known")
+    embed.add_field(name="📷 DJI Cam",    value="Camera audio input", inline=True)
+    embed.add_field(name="🎙️ Microphone", value="USB microphone",     inline=True)
+    embed.set_footer(text="Encoder will stop → switch audio → restart automatically")
     await interaction.response.send_message(embed=embed, view=AudioInputView())
 
 
@@ -276,10 +333,12 @@ async def slash_audio(interaction: discord.Interaction):
 async def slash_mic(interaction: discord.Interaction):
     embed = discord.Embed(
         title       = "🎙️ BelaBox Audio Control",
-        description = "Select the audio input for the BelaBox:",
+        description = "Switch the BelaBox encoder audio input:",
         color       = discord.Color.orange()
     )
-    embed.set_footer(text="Buttons will be active once the BelaBox WebSocket commands are known")
+    embed.add_field(name="📷 DJI Cam",    value="Camera audio input", inline=True)
+    embed.add_field(name="🎙️ Microphone", value="USB microphone",     inline=True)
+    embed.set_footer(text="Encoder will stop → switch audio → restart automatically")
     await interaction.response.send_message(embed=embed, view=AudioInputView())
 
 
