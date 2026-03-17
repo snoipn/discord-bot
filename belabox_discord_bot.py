@@ -19,6 +19,9 @@ from datetime import datetime, timezone
 DISCORD_TOKEN        = os.environ.get("DISCORD_TOKEN", "")
 TWITCH_CLIENT_ID     = os.environ.get("TWITCH_CLIENT_ID", "")
 TWITCH_CLIENT_SECRET = os.environ.get("TWITCH_CLIENT_SECRET", "")
+BELABOX_KEY          = os.environ.get("BELABOX_KEY", "")
+TG_TOKEN             = os.environ.get("TG_TOKEN", "")
+TG_CHAT_ID           = os.environ.get("TG_CHAT_ID", "")
 
 if not DISCORD_TOKEN:
     raise RuntimeError("DISCORD_TOKEN nicht gesetzt!")
@@ -35,7 +38,6 @@ CHANNEL_BB_AUDIO_2   = 1303959861385625661
 
 TWITCH_CHANNEL = "slumg1"
 KICK_CHANNEL   = "slumg"
-BELABOX_KEY    = "7DMVJ0mAklNzzjY9ayXzLjde5Hjsul"
 BELABOX_WS     = "wss://remote.belabox.net/ws/remote"
 
 CHECK_INTERVAL = 60
@@ -195,7 +197,6 @@ def save_seen(seen):
 
 # ══════════════════════════════════════════ BelaBox Audio Input Buttons ═══════
 
-BELABOX_KEY      = "7DMVJ0mAklNzzjY9ayXzLjde5Hjsul"
 BELABOX_WS_URL   = "wss://remote.belabox.net/ws/remote"
 BELABOX_PIPELINE = "f1ade4e52502e56a5d94b4786360838c719dfd49"
 BELABOX_CONFIG   = {
@@ -213,7 +214,7 @@ AUDIO_INPUTS = {
 }
 
 
-def belabox_switch_audio(asrc: str, log_fn=None):
+def belabox_switch_audio(asrc: str, log_fn=None, done_fn=None):
     """
     Stops encoder, switches audio input, restarts encoder.
     Runs in a background thread.
@@ -222,42 +223,48 @@ def belabox_switch_audio(asrc: str, log_fn=None):
 
     def _do():
         try:
-            if log_fn: log_fn(f"BelaBox: Connecting to switch audio to '{asrc}'...")
+            if log_fn: log_fn(f"BelaBox: Connecting...")
             ws = ws_lib.create_connection(
                 BELABOX_WS_URL,
                 header={"Origin": "https://remote.belabox.net",
                         "User-Agent": "Mozilla/5.0"},
                 timeout=10)
+            if log_fn: log_fn("BelaBox: Connected ✅")
 
             # Auth
-            ws.send(json.dumps({
+            auth_msg = json.dumps({
                 "remote": {"auth/key": {"key": BELABOX_KEY, "version": 6}}
-            }))
+            })
+            ws.send(auth_msg)
+            if log_fn: log_fn("BelaBox: Auth sent, waiting for response...")
 
-            # Wait for auth confirmation then stop
-            for _ in range(10):
-                msg = json.loads(ws.recv())
+            # Wait for auth confirmation
+            for i in range(15):
+                raw = ws.recv()
+                msg = json.loads(raw)
+                if log_fn: log_fn(f"BelaBox: Received: {raw[:80]}")
                 if "remote" in msg:
+                    if log_fn: log_fn("BelaBox: Auth confirmed ✅")
                     break
 
             # Stop encoder
-            if log_fn: log_fn("BelaBox: Stopping encoder...")
+            if log_fn: log_fn("BelaBox: Sending stop...")
             ws.send(json.dumps({"stop": 0}))
             time.sleep(1)
 
             # Start with new audio input
             start_cmd = {"start": {**{"pipeline": BELABOX_PIPELINE, "asrc": asrc}, **BELABOX_CONFIG}}
-            if log_fn: log_fn(f"BelaBox: Starting with audio '{asrc}'...")
+            if log_fn: log_fn(f"BelaBox: Sending start with asrc='{asrc}'...")
             ws.send(json.dumps(start_cmd))
             time.sleep(1)
 
             ws.close()
-            if log_fn: log_fn(f"BelaBox: Audio switched to '{asrc}' ✅")
-            return True
+            if log_fn: log_fn(f"BelaBox: Done ✅ Audio = '{asrc}'")
+            if done_fn: done_fn(True, asrc)
 
         except Exception as e:
-            if log_fn: log_fn(f"BelaBox: Error switching audio – {e}")
-            return False
+            if log_fn: log_fn(f"BelaBox: ERROR – {type(e).__name__}: {e}")
+            if done_fn: done_fn(False, str(e))
 
     threading.Thread(target=_do, daemon=True).start()
 
@@ -270,13 +277,13 @@ class AudioInputView(discord.ui.View):
     async def audio_osmo(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         await interaction.followup.send("⏳ Switching to **DJI Cam**...", ephemeral=True)
-        belabox_switch_audio(AUDIO_INPUTS["osmo"])
+        belabox_switch_audio(AUDIO_INPUTS["osmo"], log_fn=lambda m: print(m))
 
     @discord.ui.button(label="🎙️ Microphone", style=discord.ButtonStyle.primary, custom_id="bb_audio_usb")
     async def audio_usb(self, interaction: discord.Interaction, button: discord.ui.Button):
         await interaction.response.defer()
         await interaction.followup.send("⏳ Switching to **Microphone**...", ephemeral=True)
-        belabox_switch_audio(AUDIO_INPUTS["usb"])
+        belabox_switch_audio(AUDIO_INPUTS["usb"], log_fn=lambda m: print(m))
 
 
 # ═══════════════════════════════════════════════════════════ Clip Embed ═══════
